@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Köy Oyunu</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #7cc56a; color: #2b2b2b; user-select: none; min-height: 100vh;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5; display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; background: #3d2b1f; color: #fff; box-shadow: 0 2px 6px rgba(0,0,0,.3);
+  }
+  .kaynak { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 18px; }
+  .kaynak small { font-weight: 400; opacity: .7; font-size: 12px; }
+  .seviye-rozet { background: #f2b632; color: #3d2b1f; border-radius: 12px; padding: 3px 10px; font-weight: 700; font-size: 13px; }
+  #koy {
+    position: relative; margin: 16px auto; width: min(92vw, 420px); aspect-ratio: 1;
+    background: repeating-linear-gradient(45deg, #8fd47a 0 20px, #86cc71 20px 40px);
+    border: 6px solid #5a3d27; border-radius: 18px; box-shadow: inset 0 0 30px rgba(0,0,0,.2);
+  }
+  .bina {
+    position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center;
+    cursor: pointer; transition: transform .1s;
+  }
+  .bina:active { transform: translate(-50%, -50%) scale(.92); }
+  .bina .ikon { font-size: 64px; line-height: 1; filter: drop-shadow(0 4px 2px rgba(0,0,0,.35)); }
+  .bina .etiket { margin-top: 2px; background: rgba(0,0,0,.55); color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+  .bina.secili .ikon { filter: drop-shadow(0 0 8px #fff) drop-shadow(0 4px 2px rgba(0,0,0,.35)); }
+  .balon {
+    position: absolute; top: -18px; right: -14px; background: #fff; border-radius: 14px; padding: 2px 7px;
+    font-size: 13px; font-weight: 700; box-shadow: 0 2px 4px rgba(0,0,0,.3); animation: zipla 1s infinite;
+  }
+  @keyframes zipla { 50% { transform: translateY(-4px); } }
+  .ucan { position: fixed; pointer-events: none; font-weight: 800; color: #f2b632; text-shadow: 0 1px 2px #000; animation: uc 1s forwards; z-index: 10; }
+  @keyframes uc { to { transform: translateY(-60px); opacity: 0; } }
+  #panel {
+    margin: 0 auto 20px; width: min(92vw, 420px); background: #fff8e7; border: 4px solid #5a3d27; border-radius: 16px; padding: 14px;
+  }
+  #panel h2 { margin: 0 0 6px; font-size: 18px; }
+  #panel p { margin: 4px 0; font-size: 14px; }
+  .dugmeler { display: flex; gap: 8px; margin-top: 10px; }
+  button {
+    flex: 1; border: none; border-radius: 12px; padding: 12px; font-size: 15px; font-weight: 700; cursor: pointer;
+    background: #4caf50; color: #fff; box-shadow: 0 3px 0 #2e7d32;
+  }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 #2e7d32; }
+  button:disabled { background: #b5b5b5; box-shadow: 0 3px 0 #8a8a8a; }
+  button.altin { background: #f2b632; color: #3d2b1f; box-shadow: 0 3px 0 #b8861b; }
+  #mesaj { min-height: 20px; margin-top: 8px; font-size: 13px; color: #a33; }
+</style>
+</head>
+<body>
+<header>
+  <div class="kaynak">🪙 <span id="altin">0</span> <small>/ <span id="kapasite">0</span></small></div>
+  <div class="seviye-rozet">🏛️ Köy Seviye <span id="kbSeviye">1</span></div>
+</header>
+
+<div id="koy"></div>
+
+<div id="panel">
+  <h2 id="pBaslik">Köyüne hoş geldin, şef!</h2>
+  <p id="pAciklama">Bir binaya dokunarak bilgilerini gör. Altın madenine dokunarak biriken altını topla.</p>
+  <div class="dugmeler" id="pDugmeler"></div>
+  <div id="mesaj"></div>
+</div>
+
+<script>
+// ---- Oyun kuralları: dengeyi buradan ayarla ----
+const BINALAR = {
+  koyBinasi: {
+    ad: "Köy Binası", ikon: "🏛️", x: 50, y: 42,
+    // seviye başına: yükseltme maliyeti, altın deposu kapasitesi
+    seviyeler: [
+      { maliyet: 0, kapasite: 1000 },
+      { maliyet: 800, kapasite: 3000 },
+      { maliyet: 2500, kapasite: 8000 },
+      { maliyet: 7000, kapasite: 20000 },
+      { maliyet: 18000, kapasite: 50000 },
+    ],
+  },
+  altinMadeni: {
+    ad: "Altın Madeni", ikon: "⛏️", x: 22, y: 75,
+    // seviye başına: yükseltme maliyeti, saatlik üretim, madende birikebilecek en fazla altın
+    seviyeler: [
+      { maliyet: 0, uretim: 200, depo: 500 },
+      { maliyet: 300, uretim: 400, depo: 1000 },
+      { maliyet: 1000, uretim: 700, depo: 2000 },
+      { maliyet: 3000, uretim: 1200, depo: 4000 },
+      { maliyet: 8000, uretim: 2000, depo: 8000 },
+    ],
+  },
+};
+const BASLANGIC = { altin: 500, koyBinasi: 1, altinMadeni: 1, sonToplama: Date.now() };
+
+const tg = window.Telegram?.WebApp;
+tg?.ready(); tg?.expand();
+
+let durum = { ...BASLANGIC };
+let secili = null;
+
+// ---- Kayıt: Telegram içinde Telegram bulut deposu, dışarıda tarayıcı deposu ----
+function kaydet() {
+  const veri = JSON.stringify(durum);
+  if (tg?.CloudStorage && tg.initData) tg.CloudStorage.setItem("koy", veri);
+  try { localStorage.setItem("koy", veri); } catch (e) {}
+}
+function yukle(bitti) {
+  const uygula = (veri) => { if (veri) { try { durum = { ...BASLANGIC, ...JSON.parse(veri) }; } catch (e) {} } bitti(); };
+  if (tg?.CloudStorage && tg.initData) {
+    tg.CloudStorage.getItem("koy", (hata, veri) => uygula(hata ? null : veri));
+  } else {
+    let veri = null; try { veri = localStorage.getItem("koy"); } catch (e) {}
+    uygula(veri);
+  }
+}
+
+// ---- Hesaplar ----
+const bilgi = (id) => BINALAR[id].seviyeler[durum[id] - 1];
+const sonraki = (id) => BINALAR[id].seviyeler[durum[id]];
+const kapasite = () => bilgi("koyBinasi").kapasite;
+function bekleyen() {
+  const m = bilgi("altinMadeni");
+  const saat = (Date.now() - durum.sonToplama) / 3600000;
+  return Math.min(Math.floor(saat * m.uretim), m.depo);
+}
+
+// ---- İşlemler ----
+function topla(olay) {
+  const miktar = Math.min(bekleyen(), kapasite() - durum.altin);
+  if (miktar <= 0) { mesaj(durum.altin >= kapasite() ? "Altın deposu dolu! Köy Binasını yükselt." : "Henüz toplanacak altın yok."); return; }
+  durum.altin += miktar;
+  durum.sonToplama = Date.now();
+  kaydet();
+  tg?.HapticFeedback?.impactOccurred("light");
+  if (olay) ucanYazi(olay, "+" + miktar);
+  ciz();
+}
+function yukselt(id) {
+  const s = sonraki(id);
+  if (!s) return;
+  if (id !== "koyBinasi" && durum[id] >= durum.koyBinasi) { mesaj("Önce Köy Binasını yükseltmelisin."); return; }
+  if (durum.altin < s.maliyet) { mesaj(`Yeterli altın yok. Gerekli: ${s.maliyet} 🪙`); return; }
+  if (id === "altinMadeni") topla(); // yükseltmeden önce bekleyen altını kaybetme
+  durum.altin -= s.maliyet;
+  durum[id] += 1;
+  kaydet();
+  tg?.HapticFeedback?.notificationOccurred("success");
+  mesaj("");
+  ciz();
+  sec(id);
+}
+
+// ---- Ekran ----
+function mesaj(m) { document.getElementById("mesaj").textContent = m; }
+function ucanYazi(olay, metin) {
+  const el = document.createElement("div");
+  el.className = "ucan"; el.textContent = metin;
+  el.style.left = olay.clientX + "px"; el.style.top = olay.clientY - 20 + "px";
+  document.body.appendChild(el); setTimeout(() => el.remove(), 1000);
+}
+function ciz() {
+  document.getElementById("altin").textContent = durum.altin;
+  document.getElementById("kapasite").textContent = kapasite();
+  document.getElementById("kbSeviye").textContent = durum.koyBinasi;
+  const koy = document.getElementById("koy");
+  koy.innerHTML = "";
+  for (const [id, b] of Object.entries(BINALAR)) {
+    const el = document.createElement("div");
+    el.className = "bina" + (secili === id ? " secili" : "");
+    el.style.left = b.x + "%"; el.style.top = b.y + "%";
+    el.innerHTML = `<div class="ikon">${b.ikon}</div><div class="etiket">${b.ad} · Sv ${durum[id]}</div>`;
+    if (id === "altinMadeni" && bekleyen() > 0) el.innerHTML += `<div class="balon">🪙 ${bekleyen()}</div>`;
+    el.onclick = (olay) => { if (id === "altinMadeni") topla(olay); sec(id); };
+    koy.appendChild(el);
+  }
+  if (secili) panelCiz(secili);
+}
+function sec(id) { secili = id; mesaj(""); ciz(); }
+function panelCiz(id) {
+  const b = BINALAR[id], s = bilgi(id), n = sonraki(id);
+  document.getElementById("pBaslik").textContent = `${b.ikon} ${b.ad} (Seviye ${durum[id]})`;
+  let aciklama = id === "koyBinasi"
+    ? `Köyünün kalbi. Altın deposu: ${s.kapasite} 🪙. Diğer binalar Köy Binasının seviyesini geçemez.`
+    : `Saatte ${s.uretim} 🪙 üretir, en fazla ${s.depo} 🪙 biriktirir. Toplamak için madene dokun.`;
+  if (n) aciklama += id === "koyBinasi"
+    ? ` Sonraki seviyede depo: ${n.kapasite} 🪙.`
+    : ` Sonraki seviyede: saatte ${n.uretim} 🪙.`;
+  document.getElementById("pAciklama").textContent = aciklama;
+  const d = document.getElementById("pDugmeler");
+  d.innerHTML = "";
+  const btn = document.createElement("button");
+  if (n) {
+    btn.textContent = `⬆️ Yükselt (${n.maliyet} 🪙)`;
+    btn.disabled = durum.altin < n.maliyet;
+    btn.onclick = () => yukselt(id);
+  } else { btn.textContent = "En yüksek seviye 🏆"; btn.disabled = true; }
+  d.appendChild(btn);
+  if (id === "altinMadeni") {
+    const t = document.createElement("button");
+    t.className = "altin"; t.textContent = "🪙 Topla"; t.onclick = (olay) => topla(olay);
+    d.appendChild(t);
+  }
+}
+
+yukle(() => { ciz(); setInterval(ciz, 2000); });
+</script>
+</body>
+</html>
